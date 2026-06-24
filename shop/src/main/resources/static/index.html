@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ShopEase 商城</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="app">
+  <nav v-if="user" class="nav">
+    <span class="brand">ShopEase</span>
+    <template v-if="user.role==='customer'">
+      <a href="#/" :class="{active:route==='/'}">首页</a>
+      <a href="#/cart" :class="{active:route==='/cart'}">购物车<span v-if="cartCount" class="badge">{{cartCount}}</span></a>
+      <a href="#/orders" :class="{active:route==='/orders'}">我的订单</a>
+      <a href="#/coupons" :class="{active:route==='/coupons'}">优惠券</a>
+      <a href="#/profile" :class="{active:route==='/profile'}">个人中心</a>
+    </template>
+    <template v-if="user.role==='admin'">
+      <a href="#/admin" :class="{active:route==='/admin'}">看板</a>
+      <a href="#/admin/products" :class="{active:route==='/admin/products'}">商品</a>
+      <a href="#/admin/categories" :class="{active:route==='/admin/categories'}">分类</a>
+      <a href="#/admin/orders" :class="{active:route==='/admin/orders'}">订单</a>
+      <a href="#/admin/coupons" :class="{active:route==='/admin/coupons'}">优惠券</a>
+      <a href="#/admin/users" :class="{active:route==='/admin/users'}">用户</a>
+    </template>
+    <span class="spacer"></span>
+    <span class="user">{{ user.username }} ({{ user.role }})</span>
+    <button class="link" @click="logout">登出</button>
+  </nav>
+
+  <!-- 登录 -->
+  <div v-if="route==='/login'" class="auth-wrap">
+    <div class="auth">
+      <h1>ShopEase</h1>
+      <div class="tabs"><button :class="{on:isLogin}" @click="isLogin=true">登录</button><button :class="{on:!isLogin}" @click="isLogin=false">注册</button></div>
+      <input v-model="authForm.username" placeholder="用户名" />
+      <input v-model="authForm.password" type="password" placeholder="密码" />
+      <button class="primary block" @click="submitAuth">{{ isLogin?'登录':'注册' }}</button>
+      <p v-if="authError" class="err">{{ authError }}</p>
+    </div>
+  </div>
+
+  <!-- 首页 -->
+  <div v-else-if="route==='/'" class="page">
+    <div class="filters">
+      <select v-model="filter.category" @change="loadProducts"><option :value="null">全部分类</option><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+      <input v-model="filter.q" placeholder="搜索商品" @keyup.enter="loadProducts" />
+      <button class="primary" @click="loadProducts">搜索</button>
+    </div>
+    <div class="grid">
+      <div class="card" v-for="p in products" :key="p.id" @click="go('/product/'+p.id)">
+        <img v-if="isImageUrl(p.imageUrl)" :src="p.imageUrl" class="pimg-img" />
+        <div v-else class="pimg">{{ emoji(p.imageUrl) }}</div>
+        <h3>{{ p.name }}</h3>
+        <p class="price">¥{{ money(p.minPrice||0) }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 商品详情 -->
+  <div v-else-if="route.startsWith('/product/')" class="page">
+    <button class="ghost" @click="go('/')">← 返回</button>
+    <div class="detail" v-if="curProduct">
+      <img v-if="isImageUrl(curProduct.imageUrl)" :src="curProduct.imageUrl" class="pimg-lg-img" />
+      <div v-else class="pimg-lg">{{ emoji(curProduct.imageUrl) }}</div>
+      <div class="info">
+        <h2>{{ curProduct.name }}</h2>
+        <p class="price-lg">¥{{ money(curSku?curSku.price:0) }}</p>
+        <p class="stock">库存: {{ curSku?curSku.stock:0 }}</p>
+        <div class="specs" v-for="sp in curSpecs" :key="sp.id">
+          <label>{{ sp.name }}</label>
+          <div class="opts">
+            <button v-for="o in curSpecOptions[sp.id]" :key="o.id" :class="{on:selectedOpts[sp.id]===o.id}" @click="selectOpt(sp.id,o.id)">{{ o.value }}</button>
+          </div>
+        </div>
+        <div class="qty">数量 <button @click="qty=Math.max(1,qty-1)">-</button> {{ qty }} <button @click="qty++">+</button></div>
+        <button class="primary" @click="addToCart">加入购物车</button>
+        <button class="primary buy-now" @click="buyNow">立即购买</button>
+      </div>
+    </div>
+    <h3 style="margin-top:30px">商品评价</h3>
+    <div class="review" v-for="r in reviews" :key="r.id">
+      <span class="stars">{{ '★'.repeat(r.rating) }}{{ '☆'.repeat(5-r.rating) }}</span>
+      <span class="ruser">{{ r.username }}</span>
+      <p>{{ r.content }}</p>
+    </div>
+    <p v-if="!reviews.length" class="muted">暂无评价</p>
+  </div>
+
+  <!-- 购物车 -->
+  <div v-else-if="route==='/cart'" class="page">
+    <h2>购物车</h2>
+    <div class="cart-item" v-for="c in cart" :key="c.id">
+      <img v-if="isImageUrl(c.productImage)" :src="c.productImage" class="pimg-sm-img" />
+      <span v-else class="pimg-sm">{{ emoji(c.productImage) }}</span>
+      <span class="cname">{{ c.productName }} <small v-if="c.skuSpecs">{{ c.skuSpecs }}</small></span>
+      <span>¥{{ money(c.price) }}</span>
+      <span><button @click="c.quantity=Math.max(1,c.quantity-1);updateCart(c)">-</button> {{ c.quantity }} <button @click="c.quantity++;updateCart(c)">+</button></span>
+      <span class="r">¥{{ money(c.price*c.quantity) }}</span>
+      <button class="link" @click="delCart(c.id)">删</button>
+    </div>
+    <p v-if="!cart.length" class="muted">购物车空</p>
+    <div class="cart-total" v-if="cart.length"><span>合计: ¥{{ money(cartTotal) }}</span> <button class="primary" @click="go('/checkout')">去结算</button></div>
+  </div>
+
+  <!-- 结算 -->
+  <div v-else-if="route==='/checkout'" class="page">
+    <h2>确认订单</h2>
+    <div class="form-card">
+      <div class="addr-list">
+        <div class="addr-option" v-for="a in addresses" :key="a.id" :class="{on:selectedAddrId===a.id}" @click="selectedAddrId=a.id">
+          <strong>{{ a.receiver }}</strong> {{ a.phone }}
+          <p>{{ a.address }}</p>
+          <span class="tag-default" v-if="a.isDefault">默认</span>
+        </div>
+      </div>
+      <p v-if="!addresses.length" class="muted">暂无收货地址，请先 <a href="#/profile">添加地址</a></p>
+      <select v-model="orderForm.coupon_id"><option :value="null">不使用优惠券</option><option v-for="c in myCoupons" :key="c.couponId" :value="c.couponId">{{ c.name }} ({{couponDesc(c)}})</option></select>
+    </div>
+    <p class="cart-total"><span>合计: ¥{{ money(cartTotal) }}</span> <button class="primary" @click="placeOrder">提交订单</button></p>
+  </div>
+
+  <!-- 我的订单 -->
+  <div v-else-if="route==='/orders'" class="page">
+    <h2>我的订单</h2>
+    <div class="order-card" v-for="o in orders" :key="o.id">
+      <div class="order-head"><span>{{ o.orderNo }}</span> <span :class="o.status">{{ statusText(o.status) }}</span></div>
+      <p>¥{{ money(o.total) }} <small v-if="o.discount">优惠 ¥{{ money(o.discount) }}</small></p>
+      <p class="muted">{{ o.receiver }} {{ o.phone }} {{ o.address }}</p>
+      <button v-if="o.status==='pending'" class="primary" @click="payOrder(o.id)">模拟支付</button>
+    </div>
+    <p v-if="!orders.length" class="muted">暂无订单</p>
+  </div>
+
+  <!-- 优惠券 -->
+  <div v-else-if="route==='/coupons'" class="page">
+    <h2>可领取</h2>
+    <div class="coupon-card" v-for="c in coupons" :key="c.id"><span class="cname">{{ c.name }}</span> <span class="cdesc">{{ couponDesc(c) }}</span> <button class="primary" @click="claimCoupon(c.id)">领取</button></div>
+    <h2 style="margin-top:20px">我的优惠券</h2>
+    <div class="coupon-card" v-for="c in myCoupons" :key="c.id"><span class="cname">{{ c.name }}</span> <span class="cdesc">{{ couponDesc(c) }}</span> <span :class="c.status">{{ c.status==='unused'?'未用':'已用' }}</span></div>
+</div>
+
+<!-- 个人中心 -->
+<div v-else-if="route==='/profile'" class="page">
+  <h2>个人中心</h2>
+  <div class="profile-info">
+    <p><strong>用户名：</strong>{{ user.username }}</p>
+    <p><strong>角色：</strong>{{ user.role }}</p>
+  </div>
+  <h3>收货地址</h3>
+  <button class="primary" @click="showAddrForm=true;addrForm={receiver:'',phone:'',address:'',isDefault:0};editAddrId=null">+ 添加地址</button>
+  <div class="form-card" v-if="showAddrForm">
+    <input v-model="addrForm.receiver" placeholder="收货人" />
+    <input v-model="addrForm.phone" placeholder="电话" />
+    <input v-model="addrForm.address" placeholder="详细地址" />
+    <label class="addr-default-label"><input type="checkbox" v-model="addrForm.isDefault" :true-value="1" :false-value="0" /> 设为默认地址</label>
+    <button class="primary" @click="saveAddress">保存</button>
+    <button class="ghost" @click="showAddrForm=false">取消</button>
+  </div>
+  <div class="addr-list">
+    <div class="address-card" v-for="a in addresses" :key="a.id">
+      <div class="addr-info">
+        <strong>{{ a.receiver }}</strong> <span class="aphone">{{ a.phone }}</span>
+        <p>{{ a.address }}</p>
+        <span class="tag-default" v-if="a.isDefault">默认</span>
+      </div>
+      <div class="addr-actions">
+        <button class="link" @click="addrForm={receiver:a.receiver,phone:a.phone,address:a.address,isDefault:a.isDefault};editAddrId=a.id;showAddrForm=true">编辑</button>
+        <button class="link" @click="delAddress(a.id)">删除</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 后台:看板 -->
+  <div v-else-if="route==='/admin'" class="page">
+    <div class="stats">
+      <div class="card-stat"><span>总销售额</span><b>¥{{ money(dash.sales||0) }}</b></div>
+      <div class="card-stat"><span>订单数</span><b>{{ dash.orderCount||0 }}</b></div>
+      <div class="card-stat"><span>商品数</span><b>{{ dash.productCount||0 }}</b></div>
+      <div class="card-stat"><span>用户数</span><b>{{ dash.userCount||0 }}</b></div>
+    </div>
+    <div class="charts"><div class="chart-box"><h3>销售趋势</h3><canvas ref="salesChart"></canvas></div></div>
+  </div>
+
+  <!-- 后台:商品 -->
+  <div v-else-if="route==='/admin/products'" class="page">
+    <button class="primary" @click="prodForm={name:'',description:'',categoryId:null,imageUrl:'',status:1};editingProd=null;pendingImage=null">+ 新增商品</button>
+    <div class="form-card" v-if="prodForm.name!==null||editingProd">
+      <h3>{{ editingProd?'编辑':'新增' }}商品</h3>
+      <input v-model="prodForm.name" placeholder="名称" />
+      <textarea v-model="prodForm.description" placeholder="描述"></textarea>
+      <select v-model="prodForm.categoryId"><option :value="null">选分类</option><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+      <input v-model="prodForm.imageUrl" placeholder="图片(emoji:📱 或留空)" />
+      <button class="primary" @click="saveProduct">保存</button>
+      <div><hr><h4>商品图片</h4><input type="file" @change="onSelectImage($event)" /></div>
+    </div>
+    <div class="list">
+      <div class="tr" v-for="p in adminProducts" :key="p.id"><span>{{ p.name }}</span><span>{{ p.categoryName }}</span><span><img v-if="isImageUrl(p.imageUrl)" :src="p.imageUrl" class="admin-img" /><span v-else>{{ emoji(p.imageUrl) }}</span></span><span><button class="link" @click="editProd(p)">改</button> <button class="link" @click="delProd(p.id)">删</button></span></div>
+    </div>
+  </div>
+
+  <!-- 后台:分类 -->
+  <div v-else-if="route==='/admin/categories'" class="page">
+    <div class="form-card"><input v-model="catForm.name" placeholder="分类名" /><input v-model="catForm.icon" placeholder="emoji" /><button class="primary" @click="saveCat">添加</button></div>
+    <div class="list"><div class="tr" v-for="c in categories" :key="c.id"><span>{{ c.icon }} {{ c.name }}</span><span><button class="link" @click="delCat(c.id)">删</button></span></div></div>
+  </div>
+
+  <!-- 后台:订单 -->
+  <div v-else-if="route==='/admin/orders'" class="page">
+    <h2>订单管理</h2>
+    <div class="order-card" v-for="o in adminOrders" :key="o.id">
+      <div class="order-head"><span>{{ o.orderNo }}</span> <span>{{ o.username }}</span> <span :class="o.status">{{ statusText(o.status) }}</span></div>
+      <p>¥{{ money(o.total) }}</p>
+      <select v-model="o.status" @change="updateOrderStatus(o.id,o.status)">
+        <option value="pending">待付款</option><option value="paid">已付款</option><option value="shipped">已发货</option><option value="done">已完成</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- 后台:优惠券 -->
+  <div v-else-if="route==='/admin/coupons'" class="page">
+    <div class="form-card">
+      <input v-model="couponForm.code" placeholder="码" /><input v-model="couponForm.name" placeholder="名" />
+      <select v-model="couponForm.type"><option value="fixed">满减</option><option value="percent">折扣</option></select>
+      <input v-model.number="couponForm.value" placeholder="值(分/百分)" /><input v-model.number="couponForm.minSpend" placeholder="门槛(分)" /><input v-model.number="couponForm.total" placeholder="发放量" />
+      <button class="primary" @click="saveCoupon">创建</button>
+    </div>
+    <div class="list"><div class="tr" v-for="c in adminCoupons" :key="c.id"><span>{{ c.name }}</span><span>{{ c.type==='fixed'?'满减':'折扣' }}</span><span>{{ c.claimed }}/{{ c.total }}</span><span><button class="link" @click="delCoupon(c.id)">删</button></span></div></div>
+  </div>
+
+  <!-- 后台:用户 -->
+  <div v-else-if="route==='/admin/users'" class="page">
+    <h2>用户</h2>
+    <div class="list"><div class="tr" v-for="u in users" :key="u.id"><span>{{ u.username }}</span><span>{{ u.role }}</span><span>{{ u.phone||'-' }}</span></div></div>
+  </div>
+</div>
+<script src="/vendor/vue.js"></script>
+<script src="/vendor/chart.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
