@@ -1,0 +1,8 @@
+/shop/target/
+/shop/*.log
+/shop/server*.log
+/shop/uploads/
+/shop/temp/
+dev-tools/
+dump.rdb
+*.log
